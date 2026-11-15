@@ -165,7 +165,7 @@ body{padding:0;margin:0;background:#fff}
   <div class="form-group"><label>Nahrát obrázek (PNG bez pozadí, JPG)</label><input type="file" id="f_sup_stamp" accept="image/*" onchange="handleStampUpload(event)"><button class="btn btn-danger" style="margin-top:5px" onclick="clearStamp()">Odstranit razítko</button></div>
 
   <h3 class="sec">Katalog položek</h3>
-  <p class="hint">Položky uložíte tlačítkem ☆ u řádku faktury. Při psaní názvu se pak nabídnou i s cenou a DPH.</p>
+  <p class="hint">Položku uložíte tlačítkem „☆ Uložit“ u řádku faktury. Uložené položky pak vyberete ze seznamu pod položkami faktury (včetně ceny a DPH).</p>
   <div id="catalog_list"></div>
 
   <h3 class="sec">Záloha dat</h3>
@@ -193,7 +193,6 @@ body{padding:0;margin:0;background:#fff}
   <button class="btn btn-outline" onclick="downloadPending()">⬇️ Stáhnout PDF</button>
 </div></div>
 
-<datalist id="catalog-list"></datalist>
 <div id="toast"></div>
 
 <div class="container">
@@ -250,7 +249,11 @@ body{padding:0;margin:0;background:#fff}
 
   <h3 class="sec">Položky faktury</h3>
   <div id="items-container"></div>
-  <button class="btn btn-secondary" onclick="addItem()">+ Přidat položku</button>
+  <div class="form-group"><select id="cat_select" onchange="pickCatalogItem()"></select></div>
+  <div class="chips" style="margin-bottom:14px">
+    <button class="btn-ghost btn" onclick="addItem()">+ Prázdná položka</button>
+    <button class="btn-ghost btn" onclick="manageCatalog()">⚙️ Spravovat uložené položky</button>
+  </div>
 
   <div class="form-group"><label>Poznámka na faktuře (volitelné)</label><textarea id="f_note" oninput="onInput()" placeholder="Např. Fakturujeme Vám za služby dle objednávky č. …"></textarea></div>
 
@@ -546,7 +549,9 @@ async function aresLookup() {
 
 /* ---------- Katalog položek ---------- */
 function renderCatalogList() {
-  $('catalog-list').innerHTML = catalog.map(c => `<option value="${esc(c.name)}"></option>`).join('');
+  const sel = $('cat_select');
+  if (sel) sel.innerHTML = '<option value="">⭐ Přidat uloženou položku…</option>' +
+    catalog.map((c, i) => `<option value="${i}">${esc(c.name)} – ${fmtNum(c.price)}</option>`).join('');
   const box = $('catalog_list');
   if (box) box.innerHTML = catalog.length ? catalog.map((c, i) => `<div class="cat-row"><span>${esc(c.name)} – ${fmtNum(c.price)}${$('s_vat_payer').checked ? ', DPH ' + c.vat + ' %' : ''}</span><button class="btn btn-danger" onclick="deleteCatalog(${i})">✖</button></div>`).join('') : '<p class="hint">Zatím prázdný.</p>';
 }
@@ -559,10 +564,16 @@ function saveToCatalog(i) {
   writeJSON('fv2_catalog', catalog); renderCatalogList(); toast(k >= 0 ? 'Položka v katalogu aktualizována.' : '⭐ Položka uložena do katalogu.');
 }
 function deleteCatalog(i) { catalog.splice(i, 1); writeJSON('fv2_catalog', catalog); renderCatalogList(); }
-function catalogPick(i, name) {
-  const c = catalog.find(x => x.name === name.trim());
-  if (c && !items[i].price) { items[i].price = c.price; items[i].vat = c.vat; items[i].name = c.name; dirty = true; renderItemsForm(); }
+function pickCatalogItem() {
+  const sel = $('cat_select'), c = catalog[+sel.value];
+  if (!c) return;
+  const it = { name: c.name, qty: 1, price: c.price, vat: $('s_vat_payer').checked ? c.vat : 0 };
+  const last = items[items.length - 1];
+  if (last && !last.name.trim() && !last.price) items[items.length - 1] = it; else items.push(it);
+  dirty = true; renderItemsForm(); sel.value = '';
+  toast('Položka přidána.');
 }
+function manageCatalog() { openSettings(); setTimeout(() => $('catalog_list').scrollIntoView({ block: 'center' }), 50); }
 
 /* ---------- Položky ---------- */
 function renderItemsForm() {
@@ -571,11 +582,11 @@ function renderItemsForm() {
     const rates = [0, 12, 21].includes(it.vat) ? [0, 12, 21] : [0, 12, 21, it.vat].sort((a, b) => a - b);
     return `<div class="item-form-row ${payer ? '' : 'no-vat'}">
       <div class="form-group name-group"><label>Název</label>
-        <input list="catalog-list" value="${esc(it.name)}" oninput="updateItem(${i},'name',this.value)" onchange="catalogPick(${i},this.value)"></div>
+        <input value="${esc(it.name)}" oninput="updateItem(${i},'name',this.value)"></div>
       <div class="form-group"><label>Množ.</label><input type="number" min="0" step="any" value="${esc(it.qty)}" oninput="updateItem(${i},'qty',this.value)"></div>
       <div class="form-group"><label>Cena/ks</label><input type="number" step="any" value="${esc(it.price)}" oninput="updateItem(${i},'price',this.value)"></div>
       <div class="form-group vat-group"><label>DPH</label><select onchange="updateItem(${i},'vat',this.value)">${rates.map(r => `<option value="${r}" ${r === it.vat ? 'selected' : ''}>${r} %</option>`).join('')}</select></div>
-      <div class="row-actions"><button class="btn btn-outline btn-small" onclick="saveToCatalog(${i})" title="Uložit do katalogu">☆</button>
+      <div class="row-actions"><button class="btn btn-outline btn-small" onclick="saveToCatalog(${i})" title="Uložit tuto položku k opětovnému použití">☆ Uložit</button>
         <button class="btn btn-danger" onclick="removeItem(${i})" title="Odebrat položku">✖</button></div>
       <div class="line-total" id="lt_${i}"></div></div>`;
   }).join('');
