@@ -186,6 +186,13 @@ body{padding:0;margin:0;background:#fff}
   <div id="hist_list"></div>
 </div></div>
 
+<div id="shareModal" class="modal"><div class="modal-content" style="max-width:420px">
+  <div class="modal-header"><h2>📤 Faktura je hotová</h2><button class="close-btn" onclick="closeShare()" aria-label="Zavřít">&times;</button></div>
+  <p class="hint" id="share_msg"></p>
+  <button class="btn" id="btn_share" onclick="sharePending()">📤 Sdílet / odeslat e-mailem</button>
+  <button class="btn btn-outline" onclick="downloadPending()">⬇️ Stáhnout PDF</button>
+</div></div>
+
 <datalist id="catalog-list"></datalist>
 <div id="toast"></div>
 
@@ -247,12 +254,9 @@ body{padding:0;margin:0;background:#fff}
 
   <div class="form-group"><label>Poznámka na faktuře (volitelné)</label><textarea id="f_note" oninput="onInput()" placeholder="Např. Fakturujeme Vám za služby dle objednávky č. …"></textarea></div>
 
-  <button class="btn" style="font-size:1.05rem;padding:13px" onclick="generatePDF()" id="btn_pdf">📄 Stáhnout PDF</button>
-  <button class="btn btn-outline" onclick="window.print()">🖨️ Tisk / Uložit jako PDF</button>
-
   <div class="total-bar">
     <div class="sum"><small>Celkem k úhradě</small><span id="bar_total">0</span></div>
-    <button class="btn" onclick="issueInvoice()" title="Ctrl+S">✅ Vystavit a uložit</button>
+    <button class="btn" id="btn_finish" onclick="finishInvoice()" title="Ctrl+S">✅ Dokončit</button>
   </div>
 </div>
 
@@ -374,7 +378,7 @@ const closeHistory = () => $('historyModal').classList.remove('active');
 ['settingsModal','historyModal'].forEach(id => $(id).addEventListener('click', e => { if (e.target === $(id)) id === 'settingsModal' ? closeSettings() : closeHistory(); }));
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { closeSettings(); closeHistory(); }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); issueInvoice(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); finishInvoice(); }
 });
 
 /* ---------- Razítko ---------- */
@@ -450,18 +454,18 @@ function snapshot() {
   I_FIELDS.forEach(k => d[k] = $('f_' + k).value);
   return d;
 }
-function issueInvoice() {
-  if (!$('f_cus_name').value.trim()) { toast('Doplňte odběratele.'); $('f_cus_name').focus(); return; }
-  if (!items.some(i => i.name.trim() || i.price)) { toast('Přidejte alespoň jednu položku.'); return; }
-  const num_ = $('f_number').value.trim();
-  if (!num_) { toast('Vyplňte číslo faktury.'); $('f_number').focus(); return; }
-  if (history.some(h => h.number === num_ && h.id !== curId) && !confirm(`Faktura č. ${num_} už v historii existuje. Přesto uložit?`)) return;
+function saveToHistory() {
+  if (!$('f_cus_name').value.trim()) { toast('Doplňte odběratele.'); $('f_cus_name').focus(); return false; }
+  if (!items.some(i => i.name.trim() || i.price)) { toast('Přidejte alespoň jednu položku.'); return false; }
+  const n = $('f_number').value.trim();
+  if (!n) { toast('Vyplňte číslo faktury.'); $('f_number').focus(); return false; }
+  if (history.some(h => h.number === n && h.id !== curId) && !confirm(`Faktura č. ${n} už v historii existuje. Přesto uložit?`)) return false;
   const d = snapshot(), i = history.findIndex(h => h.id === d.id);
   if (i >= 0) history[i] = d; else history.push(d);
   curId = d.id; dirty = false;
   if (!writeJSON('fv2_history', history)) toast('Historii se nepodařilo uložit (plné úložiště).');
-  else toast('✅ Faktura uložena do historie.');
   saveDraft(); updatePreview();
+  return true;
 }
 function saveDraft() {
   const d = { id: curId, status: curStatus, items };
@@ -797,19 +801,50 @@ function fitPreview() {
 }
 window.addEventListener('resize', fitPreview);
 
-/* ---------- PDF a tisk ---------- */
-function generatePDF() {
-  if (typeof html2pdf === 'undefined') { toast('Knihovna pro PDF se nenačetla. Použijte „Tisk / Uložit jako PDF“.'); return; }
-  const btn = $('btn_pdf'), old = btn.innerHTML; btn.innerHTML = '⏳ Generuji PDF…'; btn.disabled = true;
+/* ---------- Dokončit: historie + PDF + sdílení ---------- */
+let pendingFile = null, finishing = false;
+const pdfFileName = () => `Faktura_${($('f_number').value.trim() || 'nova').replace(/[\\/:*?"<>|\s]+/g, '-')}.pdf`;
+async function buildPdf() {
   const el = $('invoice-pdf'), wr = $('preview_wrapper'), prev = wr.style.overflowX, sy = window.scrollY;
   wr.style.overflowX = 'visible'; el.style.zoom = ''; el.classList.add('pdf-mode'); window.scrollTo(0, 0);
-  const restore = () => { el.classList.remove('pdf-mode'); wr.style.overflowX = prev; fitPreview(); window.scrollTo(0, sy); btn.disabled = false; };
-  const file = `Faktura_${($('f_number').value.trim() || 'nova').replace(/[\\/:*?"<>|\s]+/g, '-')}.pdf`;
-  html2pdf().set({ margin: 0, filename: file, image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true, scrollX: 0, scrollY: 0, backgroundColor: '#ffffff' },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }, pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.inv-footer'] } })
-    .from(el).save().then(() => { restore(); btn.innerHTML = old; })
-    .catch(err => { console.error(err); restore(); btn.innerHTML = '❌ Chyba (zkuste znovu)'; setTimeout(() => btn.innerHTML = old, 3000); });
+  try {
+    return await html2pdf().set({ margin: 0, filename: pdfFileName(), image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, scrollX: 0, scrollY: 0, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }, pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.inv-footer'] } })
+      .from(el).outputPdf('blob');
+  } finally { el.classList.remove('pdf-mode'); wr.style.overflowX = prev; fitPreview(); window.scrollTo(0, sy); }
+}
+function shareData() {
+  const n = $('f_number').value, due = fmtDate($('f_date_due').value);
+  return { files: [pendingFile], title: `Faktura č. ${n}`,
+    text: `Dobrý den,\nv příloze zasílám fakturu č. ${n} na částku ${fmtMoney(lastTotal, $('f_currency').value)}${due ? ', splatnost ' + due : ''}.\n\nS pozdravem\n${$('s_sup_name').value}` };
+}
+const canShareFile = () => !!(pendingFile && navigator.canShare && navigator.canShare({ files: [pendingFile] }));
+function downloadPending() {
+  if (!pendingFile) return;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(pendingFile); a.download = pendingFile.name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function showShare(msg) { $('share_msg').textContent = msg; $('btn_share').style.display = canShareFile() ? 'block' : 'none'; $('shareModal').classList.add('active'); }
+const closeShare = () => $('shareModal').classList.remove('active');
+async function sharePending() {
+  try { await navigator.share(shareData()); closeShare(); toast('✅ Hotovo.'); }
+  catch (e) { if (e.name !== 'AbortError') toast('Sdílení se nepodařilo – použijte stažení PDF.'); }
+}
+async function finishInvoice() {
+  if (finishing) return;
+  if (!saveToHistory()) return;
+  if (typeof html2pdf === 'undefined') { toast('Faktura je uložena, ale knihovna pro PDF se nenačetla (zkontrolujte internet).'); return; }
+  finishing = true;
+  const btn = $('btn_finish'), old = btn.innerHTML; btn.innerHTML = '⏳ Připravuji PDF…'; btn.disabled = true;
+  try {
+    pendingFile = new File([await buildPdf()], pdfFileName(), { type: 'application/pdf' });
+    if (canShareFile()) {
+      try { await navigator.share(shareData()); toast('✅ Faktura uložena do historie a předána ke sdílení.'); }
+      catch (e) { if (e.name === 'AbortError') toast('Sdílení zrušeno. Faktura je uložena v historii.'); else showShare('Prohlížeč vyžaduje další klepnutí – stiskněte Sdílet. Faktura je uložena v historii.'); }
+    } else { downloadPending(); showShare('PDF bylo staženo (toto zařízení neumí sdílet přímo do aplikací). Přiložte ho k e-mailu. Faktura je uložena v historii.'); }
+  } catch (err) { console.error(err); toast('PDF se nepodařilo vytvořit. Faktura je uložena v historii.'); }
+  finally { finishing = false; btn.innerHTML = old; btn.disabled = false; }
 }
 let titleBak = document.title;
 window.addEventListener('beforeprint', () => { titleBak = document.title; document.title = 'Faktura_' + ($('f_number').value || '').replace(/[\\/:*?"<>|\s]+/g, '-'); });
