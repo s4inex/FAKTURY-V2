@@ -175,6 +175,15 @@ body{padding:0;margin:0;background:#fff}
     <button class="btn btn-small btn-outline" onclick="$('import_file').click()">⬆️ Obnovit ze zálohy</button>
     <input type="file" id="import_file" accept=".json,application/json" style="display:none" onchange="importAll(event)">
   </div>
+  <details id="donate_box" style="margin-top:20px" ontoggle="if(this.open)renderDonateQR()">
+    <summary style="cursor:pointer;font-size:.85rem;color:var(--muted)">☕ Podpořit autora</summary>
+    <div style="text-align:center;padding-top:10px">
+      <p class="hint">Program je zdarma. Pokud vám pomáhá, můžete dobrovolně přispět.</p>
+      <div class="form-group" style="max-width:160px;margin:0 auto 10px"><label>Částka (Kč)</label><input type="number" id="donate_amount" min="1" step="1" value="50" oninput="renderDonateQR()"></div>
+      <div id="donate_qr" style="display:inline-block;padding:8px;background:#fff;border-radius:6px"></div>
+      <p class="hint" style="margin-top:8px">Naskenujte v mobilním bankovnictví · účet 275030807/0300</p>
+    </div>
+  </details>
   <button class="btn" style="margin-top:20px" onclick="closeSettings()">Zavřít a uložit</button>
 </div></div>
 
@@ -742,6 +751,18 @@ function generateSPAYD(iban, amount, vs, msg, cur) {
   const v = String(vs || '').replace(/\D/g, '').slice(0, 10); if (v) s += `*X-VS:${v}`;
   const m = String(msg || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]|\*/g, '').trim().slice(0, 60); if (m) s += `*MSG:${m}`;
   return s;
+}
+
+/* ---------- Dobrovolný dar (QR v Nastavení) ---------- */
+const DONATE_ACC = '275030807/0300';
+function renderDonateQR() {
+  const box = $('donate_qr'); if (!box || typeof QRCode === 'undefined') return;
+  const amount = Math.max(1, round2(num($('donate_amount').value) || 50)), iban = czAccountToIban(DONATE_ACC);
+  box.innerHTML = '';
+  try {
+    new QRCode(box, { text: generateSPAYD(iban, amount, '', 'Dar Generator faktur', 'CZK'), width: 160, height: 160,
+      colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+  } catch (e) {}
 }
 
 /* ---------- Náhled ---------- */
